@@ -7,6 +7,7 @@
 #include <map>
 #include <unordered_map>
 #include <vector>
+#include <memory> //smart ptr
 
 //remove sdl and move sdl surface image to shaders?
 #include <SDL2/SDL_image.h>
@@ -21,9 +22,22 @@
 
 //bullet physics
 #include "BulletGLDebugger.hpp"
-#include <memory> //smart ptr
 #include <btBulletDynamicsCommon.h>
-#include "BulletCollision/CollisionShapes/btShapeHull.h"
+#include <BulletCollision/CollisionShapes/btShapeHull.h>
+
+/*
+//do not use
+#include <ConvexDecomposition/ConvexBuilder.h>
+#include <ConvexDecomposition/ConvexDecomposition.h>
+*/
+
+#include <HACD/hacdCircularList.h>
+#include <HACD/hacdVector.h>
+#include <HACD/hacdICHull.h>
+#include <HACD/hacdGraph.h>
+#include <HACD/hacdHACD.h>
+
+#include "/home/igi/Downloads/v-hacd-master/src/VHACD_Lib/public/VHACD.h"
 
 #define MAX_BONES 64
 #define MAX_BONES_PER_VERTEX 4
@@ -105,8 +119,15 @@ namespace Helix {
             
             Mesh* GetMesh(std::string meshName);
             //bulletphysics
-            btConvexShape* GetCollisionTriangleShape();
-            btConvexHullShape* GetCollisionHullShape(bool advancedModel = false);
+            btConvexShape* GetBulletTriangleShape();
+            btConvexHullShape* GetBulletConvexHullShape(bool advancedModel = false);
+			
+			std::vector<float> GetModelVertices();
+			std::vector<unsigned int> GetModelIndices();
+			
+			btCompoundShape* CreateShapeHACD();
+			btCompoundShape* GetBulletVHACDShape();
+		
             //~bulletphysics
 						
 			void SetAnimIndex(int animIndex);
@@ -119,7 +140,7 @@ namespace Helix {
 			double FrameToTime(double frame);
 			glm::mat4 GetBoneMatrix(std::string name);
 						
-			void Draw(GLuint shader, glm::mat4 model, glm::mat4 view, glm::mat4 projection, double dt, glm::mat4 lightModelMat = glm::mat4());
+			void Draw(GLuint shader, glm::mat4 model, glm::mat4 view, glm::mat4 projection, double dt, glm::mat4 lightModelMat = glm::mat4(), glm::vec3 viewPos = glm::vec3());
 			void DrawSkeletonBones(GLuint shader, glm::mat4 model, glm::mat4 view, glm::mat4 projection);
 			void DrawSkeletonJoints(GLuint shader, glm::mat4 model, glm::mat4 view, glm::mat4 projection);
 
@@ -165,9 +186,13 @@ namespace Helix {
 			aiAnimation* m_activeAnimation;
 			
 			//bulletphysics
+			//later move to entity manager, where it will use one shared convex hull over all other entities (models)
 			std::unique_ptr<btConvexShape> m_collisionTriangleShape;
 			std::shared_ptr<btConvexHullShape> m_collisionHullShape;
 			std::unique_ptr<btTriangleIndexVertexArray> m_collisionShapeIndexedVertexArray;
+			
+			std::unique_ptr<btCompoundShape> m_compoundShape;
+			btAlignedObjectArray<std::shared_ptr<btConvexHullShape>> m_convexHullShapes;
 			//~bulletphysics
     };
 }

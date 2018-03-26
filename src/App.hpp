@@ -20,11 +20,7 @@
 //common
 #include "Asset.hpp"
 #include "Camera.hpp"
-
 #include "Assimp_Model_Animator/Model.hpp"
-
-#include <BulletCollision/CollisionShapes/btBox2dShape.h>
-
 
 namespace tb = Testbed;
 

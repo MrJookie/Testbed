@@ -570,7 +570,7 @@ namespace Helix {
 		}
 	}
 	 
-    void Model::Draw(GLuint shader, glm::mat4 model, glm::mat4 view, glm::mat4 projection, double dt, glm::mat4 lightModelMat) {
+    void Model::Draw(GLuint shader, glm::mat4 model, glm::mat4 view, glm::mat4 projection, double dt, glm::mat4 lightModelMat, glm::vec3 viewPos) {
 		glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
         
@@ -584,6 +584,7 @@ namespace Helix {
         
         //glm::vec3 lightPos(2.7f * moveX, 0.2f, 2.0f * moveY);
         glUniform3f(glGetUniformLocation(shader, "lightPos"), lightPos.x, lightPos.y, lightPos.z);
+        glUniform3f(glGetUniformLocation(shader, "viewPos"), viewPos.x, viewPos.y, viewPos.z);
 		//~light
 		
 		glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, glm::value_ptr(model));
@@ -692,12 +693,12 @@ namespace Helix {
 		glDisable(GL_PROGRAM_POINT_SIZE);
 		glUseProgram(0);
 	}
-	
-	btConvexShape* Model::GetCollisionTriangleShape() {
+
+	btConvexShape* Model::GetBulletTriangleShape() {
 		if(!m_collisionTriangleShape) {
 			m_collisionShapeIndexedVertexArray = std::make_unique<btTriangleIndexVertexArray>();
 
-			for(auto& mesh : m_meshes) {
+			for(const auto& mesh : m_meshes) {
 				btIndexedMesh indexedMesh;
 
 				indexedMesh.m_numTriangles = mesh.m_indices.size() / 3;
@@ -713,7 +714,6 @@ namespace Helix {
 				m_collisionShapeIndexedVertexArray->addIndexedMesh(indexedMesh);
 			}
 			
-			//todo convex decompositions ?
 			m_collisionTriangleShape = std::make_unique<btConvexTriangleMeshShape>(m_collisionShapeIndexedVertexArray.get());
 			//m_collisionTriangleShape = std::make_unique<btBvhTriangleMeshShape>(m_collisionShapeIndexedVertexArray.get(), true, true);
 		}
@@ -721,7 +721,7 @@ namespace Helix {
 		return m_collisionTriangleShape.get();
 	}
 	
-	btConvexHullShape* Model::GetCollisionHullShape(bool advancedModel) {
+	btConvexHullShape* Model::GetBulletConvexHullShape(bool advancedModel) {
 		if(!m_collisionHullShape) {
 			m_collisionHullShape = std::make_shared<btConvexHullShape>();
 
@@ -756,5 +756,226 @@ namespace Helix {
 		
 		return m_collisionHullShape.get();
 	}
+	
+	std::vector<float> Model::GetModelVertices() {
+		std::vector<float> vertices;
+		
+		for(int i = 0; i < m_meshes.size(); ++i) {
+			for(int j = 0; j < m_meshes[i].m_vertices.size(); ++j) {
+				glm::vec3 vertexPosition = m_meshes[i].m_vertices[j].Position;
+				
+				vertices.push_back(vertexPosition.x);
+				vertices.push_back(vertexPosition.y);
+				vertices.push_back(vertexPosition.z);
+			}
+		}
+		
+		return vertices;
+	}
+	
+	std::vector<unsigned int> Model::GetModelIndices() {
+		std::vector<unsigned int> indices;
+		
+		for(int i = 0; i < m_meshes.size(); ++i) {
+			for(int j = 0; j < m_meshes[i].m_indices.size(); ++j) {
+				indices.push_back(m_meshes[i].m_indices[j]);
+			}
+		}
+		
+		return indices;
+	}
+	
+	btCompoundShape* Model::CreateShapeHACD() {
+		std::vector<float> vertices = this->GetModelVertices();
+		std::vector<unsigned int> indices = this->GetModelIndices();
+		
+		btVector3 centroid(0, 0, 0);
+		btAlignedObjectArray<btVector3> convexHullCentroids;
+		//int baseCount = 0;
 
+		std::vector<HACD::Vec3<HACD::Real>> Points;
+		std::vector<HACD::Vec3<long>> Triangles;
+
+		for(int i = 0; i < vertices.size(); i += 3) {
+			HACD::Vec3<HACD::Real> Vertex(vertices[i], vertices[i + 1], vertices[i + 2]);
+			Points.push_back(Vertex);
+		}
+		
+		for(int i = 0; i < indices.size(); i += 3) {
+			HACD::Vec3<long> Triangle(indices[i], indices[i + 1], indices[i + 2]);
+			Triangles.push_back(Triangle);
+		}
+
+		HACD::HACD myHACD; // http://kmamou.blogspot.cz/2011/11/hacd-parameters.html
+		myHACD.SetPoints(&Points[0]);
+		myHACD.SetNPoints(Points.size());
+		myHACD.SetTriangles(&Triangles[0]);
+		myHACD.SetNTriangles(Triangles.size());
+		myHACD.SetCompacityWeight(0.1);
+		myHACD.SetVolumeWeight(0.0);
+
+		myHACD.SetNClusters(0);
+		myHACD.SetNVerticesPerCH(100);
+		myHACD.SetConcavity(200);
+		myHACD.SetAddExtraDistPoints(false);
+		myHACD.SetAddNeighboursDistPoints(false);
+		myHACD.SetAddFacesPoints(false);
+
+		myHACD.Compute();
+
+		for(int c = 0; c < myHACD.GetNClusters(); ++c) {
+			int numPoints = myHACD.GetNPointsCH(c);
+			int numTriangles = myHACD.GetNTrianglesCH(c);
+
+			float* Vertices = new float[numPoints * 3];
+			//unsigned int* Triangles = new unsigned int[numTriangles * 3];
+
+			HACD::Vec3<HACD::Real>* PointsCH = new HACD::Vec3<HACD::Real>[numPoints];
+			HACD::Vec3<long>* TrianglesCH = new HACD::Vec3<long>[numTriangles];
+			
+			myHACD.GetCH(c, PointsCH, TrianglesCH);
+
+			for(int v = 0; v < numPoints; v++) {
+				Vertices[3 * v] = PointsCH[v].X();
+				Vertices[3 * v + 1] = PointsCH[v].Y();
+				Vertices[3 * v + 2] = PointsCH[v].Z();
+			}
+			
+			/*
+			for(int f = 0; f < numTriangles; f++) {
+				Triangles[3 * f] = TrianglesCH[f].X();
+				Triangles[3 * f + 1] = TrianglesCH[f].Y();
+				Triangles[3 * f + 2] = TrianglesCH[f].Z();
+			}
+			*/
+
+			delete[] PointsCH;
+			delete[] TrianglesCH;
+
+			centroid.setValue(0, 0, 0);
+
+			btAlignedObjectArray<btVector3> h_Vertices;
+
+			for(int i = 0; i < numPoints; ++i) {
+				btVector3 Vertex(Vertices[i * 3], Vertices[i * 3 + 1], Vertices[i * 3 + 2]);
+				centroid += Vertex;
+			}
+
+			centroid *= 1.0f / (float)numPoints;
+
+			for(int i = 0; i < numPoints; ++i) {
+				btVector3 Vertex(Vertices[i * 3], Vertices[i * 3 + 1], Vertices[i * 3 + 2]);
+				Vertex -= centroid;
+				h_Vertices.push_back(Vertex);
+			}
+
+			/*
+			const unsigned int *src = Triangles;
+			for(int i = 0; i < nTriangles; ++i) {
+				unsigned int index0 = *src++;
+				unsigned int index1 = *src++;
+				unsigned int index2 = *src++;
+
+				btVector3 vertex0(Vertices[index0 * 3], Vertices[index0 * 3 + 1], Vertices[index0 * 3 + 2]);
+				btVector3 vertex1(Vertices[index1 * 3], Vertices[index1 * 3 + 1], Vertices[index1 * 3 + 2]);
+				btVector3 vertex2(Vertices[index2 * 3], Vertices[index2 * 3 + 1], Vertices[index2 * 3 + 2]);
+
+				vertex0 -= centroid;
+				vertex1 -= centroid;
+				vertex2 -= centroid;
+
+				TriMesh->addTriangle(vertex0, vertex1, vertex2);
+
+				index0 += baseCount;
+				index1 += baseCount;
+				index2 += baseCount;
+			}
+			*/
+				
+			std::shared_ptr<btConvexHullShape> convexHullShape = std::make_shared<btConvexHullShape>(&h_Vertices[0].getX(), h_Vertices.size());
+			convexHullShape->setMargin(0.01f);
+			
+			convexHullShape->optimizeConvexHull(); //removes inner unwanted verts
+			convexHullShape->initializePolyhedralFeatures(); //makes rendering nicer, but doesn't affect collision detection at all
+			
+			m_convexHullShapes.push_back(convexHullShape);
+			convexHullCentroids.push_back(centroid);
+			
+			//baseCount += nPoints;
+						
+			delete[] Vertices;
+			//delete[] Triangles;
+		}
+		
+		m_compoundShape = std::make_unique<btCompoundShape>();
+		
+		btTransform transform;
+		transform.setIdentity();
+
+		for(int i = 0; i < m_convexHullShapes.size(); ++i) {
+			transform.setOrigin(convexHullCentroids[i]);
+			m_compoundShape->addChildShape(transform, m_convexHullShapes[i].get());
+		}
+
+		return m_compoundShape.get();
+	}
+	
+	btCompoundShape* Model::GetBulletVHACDShape() {
+		std::vector<float> vertices = this->GetModelVertices();
+		std::vector<unsigned int> indices = this->GetModelIndices();
+		
+		btVector3 centroid(0, 0, 0);
+		btAlignedObjectArray<btVector3> convexHullCentroids;
+		
+		VHACD::IVHACD::Parameters params; // http://kmamou.blogspot.cz/2014/12/v-hacd-20-parameters-description.html
+		params.m_maxNumVerticesPerCH = 32;
+		params.m_concavity = 0.0025;
+		params.m_mode = 0;
+		
+		VHACD::IVHACD* interfaceVHACD = VHACD::CreateVHACD();
+
+		bool res = interfaceVHACD->Compute(&vertices[0], (unsigned int)vertices.size() / 3, &indices[0], (unsigned int)indices.size() / 3, params);
+		if(res) {
+			VHACD::IVHACD::ConvexHull ch;
+
+			for(int i = 0; i < interfaceVHACD->GetNConvexHulls(); ++i) {
+				interfaceVHACD->GetConvexHull(i, ch);
+
+				centroid.setValue(0, 0, 0);
+				btAlignedObjectArray<btVector3> h_Vertices;
+
+				for(int v = 0, idx = 0; v < ch.m_nPoints; ++v, idx += 3) {
+					btVector3 Vertex(ch.m_points[idx], ch.m_points[idx+1], ch.m_points[idx+2]);
+					//Centroid += Vertex - btVector3(0, 3.0, 0);
+					h_Vertices.push_back(Vertex);
+				}
+				
+				centroid *= 1.0f / (float)ch.m_nPoints;
+
+				std::shared_ptr<btConvexHullShape> convexHullShape = std::make_shared<btConvexHullShape>(&h_Vertices[0].getX(), h_Vertices.size());
+				convexHullShape->setMargin(0.01f);
+				
+				convexHullShape->optimizeConvexHull(); //removes inner unwanted verts
+				convexHullShape->initializePolyhedralFeatures(); //makes rendering nicer, but doesn't affect collision detection at all
+				
+				m_convexHullShapes.push_back(convexHullShape);
+				convexHullCentroids.push_back(centroid);      
+			}
+		}
+		
+		interfaceVHACD->Clean();
+		interfaceVHACD->Release();
+		
+		m_compoundShape = std::make_unique<btCompoundShape>();
+		
+		btTransform transform;
+		transform.setIdentity();
+		
+		for(int i = 0; i < m_convexHullShapes.size(); ++i) {
+			transform.setOrigin(convexHullCentroids[i]);
+			m_compoundShape->addChildShape(transform, m_convexHullShapes[i].get());
+		}
+		
+		return m_compoundShape.get();
+	}
 }

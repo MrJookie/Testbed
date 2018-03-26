@@ -1,8 +1,13 @@
 link64bit := -Llib/linux/64bit -lSDL2 -lSDL2_image -lSDL2_mixer \
-				-Wl,-rpath="../lib/linux/64bit/",-rpath="../lib/linux" -Llib/linux -lGL -lGLEW -lassimp -lBulletSoftBody -lBulletDynamics -lBulletCollision -lLinearMath
+				-Wl,-rpath="../lib/linux/64bit/",-rpath="../lib/linux" -Llib/linux -lGL -lGLEW -lassimp
 link32bit := -Llib/linux/32bit -lSDL2 -lSDL2_image -lSDL2_mixer \
-				-Wl,-rpath="../lib/linux/32bit/",-rpath="../lib/linux" -Llib/linux -lGL -lGLEW -lassimp -lBulletSoftBody -lBulletDynamics -lBulletCollision -lLinearMath
-link := $(link64bit)
+				-Wl,-rpath="../lib/linux/32bit/",-rpath="../lib/linux" -Llib/linux -lGL -lGLEW -lassimp
+				
+bulletLink := -lBulletSoftBody -lBulletDynamics -lBulletCollision -lLinearMath
+hacdLink := -lHACD
+vhacdLink := -Llibs/vhacd -lvhacd -lpthread -fopenmp
+
+link := $(link64bit) $(bulletLink) $(hacdLink) $(vhacdLink)
 
 arch := 
 
@@ -18,8 +23,9 @@ cpp := 	\
 		src/Camera.cpp									\
 		src/Assimp_Model_Animator/Model.cpp				\
 		src/Assimp_Model_Animator/BulletGLDebugger.cpp	\
+		src/example_skinning_bullet_vhacd.cpp			\
 
-exe := release/Assimp_Model_Animator
+exe := release/Testbed
 
 build := build
 flags :=
